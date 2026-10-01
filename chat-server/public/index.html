@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Socket.IO Chat - Laptop</title>
+    <style>
+        :root {
+            --bg-color: #ffffff;
+            --text-color: #000000;
+            --sidebar-bg: #f4f4f4;
+            --border-color: #ccc;
+            --accent-color: #007bff;
+            --chat-bg: #f9f9f9;
+        }
+
+        [data-theme="dark"] {
+            --bg-color: #121212;
+            --text-color: #e0e0e0;
+            --sidebar-bg: #1e1e1e;
+            --border-color: #333;
+            --accent-color: #bb86fc;
+            --chat-bg: #1a1a1a;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            height: 100vh;
+            margin: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            transition: background 0.3s, color 0.3s;
+        }
+
+        /* Sidebar */
+        #sidebar {
+            width: 280px;
+            background-color: var(--sidebar-bg);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+        }
+
+        #sidebar h3 { margin-top: 0; }
+
+        #contact-list {
+            flex: 1;
+            overflow-y: auto;
+            list-style: none;
+            padding: 0;
+        }
+
+        .contact-item {
+            padding: 12px;
+            border-bottom: 1px solid var(--border-color);
+            cursor: pointer;
+            border-radius: 4px;
+            margin-bottom: 5px;
+        }
+
+        .contact-item:hover { background-color: var(--border-color); }
+        .contact-item.active { background-color: var(--accent-color); color: white; }
+
+        /* Main Chat Area */
+        #main-chat {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        #chat-log {
+            flex: 1;
+            border: 1px solid var(--border-color);
+            background: var(--chat-bg);
+            padding: 15px;
+            overflow-y: auto;
+            margin-bottom: 15px;
+            border-radius: 8px;
+        }
+
+        .controls { display: flex; gap: 10px; }
+        input {
+            padding: 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            background: var(--bg-color);
+            color: var(--text-color);
+        }
+        #message { flex: 1; }
+        #username { width: 120px; }
+
+        button {
+            padding: 10px 20px;
+            background: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .system { font-style: italic; color: #888; margin: 8px 0; text-align: center; }
+        .msg-line { margin-bottom: 8px; }
+        .username-label { font-weight: bold; color: var(--accent-color); margin-right: 5px; }
+
+        .theme-toggle { cursor: pointer; font-size: 0.9rem; border: 1px solid var(--border-color); padding: 5px 10px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <h3>Chats</h3>
+        <button onclick="addGroup()" style="width: 100%; margin-bottom: 15px;">+ Add Group</button>
+        <ul id="contact-list">
+            <li class="contact-item active" onclick="switchRoom(null, 'Global Chat', this)">Global Chat</li>
+        </ul>
+    </div>
+
+    <div id="main-chat">
+        <header>
+            <h2 id="current-chat-title">Global Chat</h2>
+            <div class="theme-toggle" id="theme-btn" onclick="toggleTheme()">Switch to Dark</div>
+        </header>
+
+        <div id="chat-log"></div>
+
+        <div class="controls">
+            <input type="text" id="username" placeholder="Your Name" value="Laptop">
+            <input type="text" id="message" placeholder="Type a message...">
+            <button onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const chatLog = document.getElementById('chat-log');
+        const messageInput = document.getElementById('message');
+        const usernameInput = document.getElementById('username');
+        const contactList = document.getElementById('contact-list');
+        const chatTitle = document.getElementById('current-chat-title');
+        const themeBtn = document.getElementById('theme-btn');
+
+        let currentRoom = null;
+        let contacts = JSON.parse(localStorage.getItem('web_contacts') || '[]');
+
+        // Initialize Contacts
+        function renderContacts() {
+            // Keep Global Chat
+            contactList.innerHTML = `<li class="contact-item ${currentRoom === null ? 'active' : ''}" onclick="switchRoom(null, 'Global Chat', this)">Global Chat</li>`;
+
+            contacts.forEach(c => {
+                const li = document.createElement('li');
+                li.className = `contact-item ${currentRoom === c.roomId ? 'active' : ''}`;
+                li.innerText = c.name + (c.isGroup ? ' (Group)' : '');
+                li.onclick = () => switchRoom(c.roomId, c.name, li);
+                contactList.appendChild(li);
+            });
+        }
+        renderContacts();
+
+        // Socket Listeners
+        socket.on('message', (data) => {
+            const { username, text, room } = data;
+
+            // Auto-Add Contact Logic
+            autoAddContact(username);
+
+            // Display message if it belongs to current room
+            if (room === currentRoom || (!room && !currentRoom)) {
+                const div = document.createElement('div');
+                div.className = 'msg-line';
+                div.innerHTML = `<span class="username-label">${username}:</span> ${text}`;
+                chatLog.appendChild(div);
+                chatLog.scrollTop = chatLog.scrollHeight;
+            }
+        });
+
+        socket.on('system', (msg) => {
+            const div = document.createElement('div');
+            div.className = 'system';
+            div.innerText = `--- ${msg} ---`;
+            chatLog.appendChild(div);
+            chatLog.scrollTop = chatLog.scrollHeight;
+        });
+
+        // Functions
+        function sendMessage() {
+            const text = messageInput.value.trim();
+            const username = usernameInput.value.trim() || 'Laptop';
+            if (text) {
+                const payload = { username, text };
+                if (currentRoom) payload.room = currentRoom;
+
+                socket.emit('message', payload);
+                messageInput.value = '';
+            }
+        }
+
+        function switchRoom(roomId, name, element) {
+            currentRoom = roomId;
+            chatTitle.innerText = name;
+            chatLog.innerHTML = ''; // Clear for room change
+
+            // Highlight active in UI
+            document.querySelectorAll('.contact-item').forEach(el => el.classList.remove('active'));
+            element.classList.add('active');
+
+            if (currentRoom) {
+                socket.emit('joinRoom', currentRoom);
+            }
+
+            const div = document.createElement('div');
+            div.className = 'system';
+            div.innerText = `--- Joined: ${name} ---`;
+            chatLog.appendChild(div);
+        }
+
+        function autoAddContact(name) {
+            const myName = usernameInput.value.trim().toLowerCase();
+            if (name.toLowerCase() === 'anonymous' || name.toLowerCase() === myName || name.toLowerCase() === 'laptop') return;
+
+            const exists = contacts.find(c => !c.isGroup && c.name.toLowerCase() === name.toLowerCase());
+            if (!exists) {
+                const participants = [myName || 'laptop', name.toLowerCase()].sort();
+                const roomId = `private_${participants[0]}_${participants[1]}`;
+
+                contacts.push({ name, roomId, isGroup: false });
+                localStorage.setItem('web_contacts', JSON.stringify(contacts));
+                renderContacts();
+            }
+        }
+
+        function addGroup() {
+            const name = prompt("Enter Group/Room Name:");
+            if (name) {
+                const roomId = "group_" + name.toLowerCase().replace(/\s+/g, '_');
+                if (!contacts.find(c => c.roomId === roomId)) {
+                    contacts.push({ name, roomId, isGroup: true });
+                    localStorage.setItem('web_contacts', JSON.stringify(contacts));
+                    renderContacts();
+                }
+            }
+        }
+
+        // Theme Support
+        function toggleTheme() {
+            const isDark = document.body.getAttribute('data-theme') === 'dark';
+            if (isDark) {
+                document.body.removeAttribute('data-theme');
+                themeBtn.innerText = "Switch to Dark";
+                localStorage.setItem('theme', 'light');
+            } else {
+                document.body.setAttribute('data-theme', 'dark');
+                themeBtn.innerText = "Switch to Light";
+                localStorage.setItem('theme', 'dark');
+            }
+        }
+
+        // Load saved theme
+        if (localStorage.getItem('theme') === 'dark') {
+            document.body.setAttribute('data-theme', 'dark');
+            themeBtn.innerText = "Switch to Light";
+        }
+
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+    </script>
+</body>
+</html>
