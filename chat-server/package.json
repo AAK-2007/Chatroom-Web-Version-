@@ -1,0 +1,10 @@
+{
+  "name": "socketio-chat-server",
+  "version": "1.0.0",
+  "description": "Simple Socket.IO chat server",
+  "main": "server.js",
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2"
+  }
+}
